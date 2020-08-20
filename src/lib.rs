@@ -7,6 +7,7 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
 mod ffi;
+mod signals;
 
 extern crate libc;
 extern crate nix;
@@ -33,6 +34,7 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum DaemonError {
     /// Unable to fork
     Fork,
@@ -72,8 +74,6 @@ pub enum DaemonError {
     GetGrRecord,
     /// Failed to get passwd record
     GetPasswdRecord,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 pub type Result<T> = std::result::Result<T, DaemonError>;
@@ -260,7 +260,7 @@ impl Daemon {
     }
 
     /// This is a setter to give your daemon a pid file
-    /// # Arguments
+    /// ## Arguments
     /// * `path` - path to the file suggested `/var/run/my_program_name.pid`
     /// * `chmod` - if set a chmod of the file to the user and group passed will be attempted (**this being true makes setting an user and group mandatory**)
     pub fn pid_file<T: AsRef<Path>>(mut self, path: T, chmod: Option<bool>) -> Self {
