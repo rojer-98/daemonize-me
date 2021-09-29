@@ -10,6 +10,7 @@ mod ffi;
 
 extern crate libc;
 extern crate nix;
+
 use ffi::{GroupRecord, PasswdRecord};
 use nix::fcntl::{open, OFlag};
 use nix::sys::stat::{umask, Mode};
@@ -31,7 +32,10 @@ use std::io::prelude::*;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use crate::ffi::set_proc_name;
+use crate::ffi::{set_proc_name};
+use nix::sys::signal::{Signal, SaFlags, SigSet};
+use nix::sys::signal::SigHandler::SigAction as SigA;
+use nix::sys::signal::SigAction;
 
 #[derive(Debug, Snafu)]
 pub enum DaemonError {
@@ -206,10 +210,14 @@ pub struct Daemon {
     user: Option<User>,
     group: Option<Group>,
     umask: u16,
-    stdin: Stdio, // stdin is practically always null
+    stdin: Stdio,
+    // stdin is practically always null
     stdout: Stdio,
     stderr: Stdio,
     name: Option<OsString>,
+    /// Callback for any signal being received except for SIGINT, will be passed a Signal and should
+    /// determine how to handle said signal
+    on_signal: Option<Box<fn(_: Signal)>>,
 }
 
 fn redirect_stdio(stdin: &Stdio, stdout: &Stdio, stderr: &Stdio) -> Result<()> {
@@ -262,6 +270,7 @@ impl Daemon {
             stdout: Stdio::devnull(),
             stderr: Stdio::devnull(),
             name: None,
+            on_signal: None,
         }
     }
 
@@ -313,6 +322,54 @@ impl Daemon {
     pub fn name(mut self, name: &OsStr) -> Self {
         self.name = Some(OsString::from(name));
         self
+    }
+
+    pub fn set_sig_callback(mut self, callback: Box<fn(_: Signal)>) -> Self {
+        self.on_signal = Some(callback);
+        self
+    }
+
+    pub(crate) fn callback_trigger() {}
+
+    fn setup_sig_handler(flags: SaFlags, mask: SigSet) {
+        let action = SigAction::new(SigA(sig_action), flags, mask);
+        let sig_list = [
+            Signal::SIGHUP,
+            Signal::SIGINT,
+            Signal::SIGQUIT,
+            Signal::SIGILL,
+            Signal::SIGTRAP,
+            Signal::SIGABRT,
+            Signal::SIGBUS,
+            Signal::SIGFPE,
+            Signal::SIGKILL,
+            Signal::SIGUSR1,
+            Signal::SIGSEGV,
+            Signal::SIGUSR2,
+            Signal::SIGPIPE,
+            Signal::SIGALRM,
+            Signal::SIGTERM,
+            Signal::SIGSTKFLT,
+            Signal::SIGCHLD,
+            Signal::SIGCONT,
+            Signal::SIGSTOP,
+            Signal::SIGTSTP,
+            Signal::SIGTTIN,
+            Signal::SIGTTOU,
+            Signal::SIGURG,
+            Signal::SIGXCPU,
+            Signal::SIGXFSZ,
+            Signal::SIGVTALRM,
+            Signal::SIGPROF,
+            Signal::SIGWINCH,
+            Signal::SIGIO,
+            Signal::SIGPWR,
+            Signal::SIGSYS
+        ];
+
+        for signal in &sig_list {
+
+        }
     }
 
     /// Using the parameters set, daemonize the process
@@ -400,16 +457,16 @@ impl Daemon {
                 Err(_) => return Err(DaemonError::SetGid),
             };
             #[cfg(not(target_os = "macos"))]
-            {
-                let u_cstr = match CString::new(uname) {
-                    Ok(cstr) => cstr,
-                    Err(_) => return Err(DaemonError::SetGid),
-                };
-                match initgroups(&u_cstr, gr) {
-                    Ok(_) => (),
-                    Err(_) => return Err(DaemonError::InitGroups),
-                };
-            }
+                {
+                    let u_cstr = match CString::new(uname) {
+                        Ok(cstr) => cstr,
+                        Err(_) => return Err(DaemonError::SetGid),
+                    };
+                    match initgroups(&u_cstr, gr) {
+                        Ok(_) => (),
+                        Err(_) => return Err(DaemonError::InitGroups),
+                    };
+                }
             match setuid(user) {
                 Ok(_) => (),
                 Err(_) => return Err(DaemonError::SetUid),
@@ -430,6 +487,7 @@ impl Daemon {
 mod tests {
     // TODO: Improve testing coverage
     extern crate nix;
+
     use super::*;
 
     #[test]
